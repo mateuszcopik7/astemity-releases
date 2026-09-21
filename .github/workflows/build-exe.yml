@@ -1,0 +1,65 @@
+# Buduje instalator Windows (.exe) z paczki panelu i dokleja go do wydania.
+#
+# Powod: Inno Setup kompiluje sie tylko na Windowsie, a wydania robimy
+# z Maca. Runner windows-latest ma Inno Setup 6 preinstalowany.
+#
+# Wyzwalacz: opublikowanie wydania w tym repo (robi to tools/release.sh
+# z repozytorium prywatnego). Mozna tez odpalic recznie dla danego tagu.
+name: Instalator Windows
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag wydania, np. v0.3.4"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ustal tag i wersje
+        id: v
+        shell: bash
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Pobierz paczke panelu z wydania
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ steps.v.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "astemity-${{ steps.v.outputs.version }}.zip" \
+            --dir .
+          unzip -q "astemity-${{ steps.v.outputs.version }}.zip" -d unpacked
+          # Zip ma folder astemity-X.Y.Z/ w srodku.
+          mv "unpacked/astemity-${{ steps.v.outputs.version }}" payload
+          test -f payload/CSXS/manifest.xml
+
+      - name: Kompiluj instalator
+        shell: cmd
+        run: >
+          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+          /DMyVersion=${{ steps.v.outputs.version }}
+          /DPayload=..\payload
+          installer\astemity.iss
+
+      - name: Dolacz .exe do wydania
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ steps.v.outputs.tag }}" \
+            "installer/Astemity-${{ steps.v.outputs.version }}-instalator.exe" \
+            --repo "$GITHUB_REPOSITORY" --clobber
