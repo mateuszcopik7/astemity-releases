@@ -64,5 +64,6 @@ Premiere. Instalator jest potrzebny tylko za pierwszym razem.
   przyciskiem > Otworz).
 
 Oba zapytaja, czy usunac takze Twoje ustawienia (zestawy efektow, presety
-Grid, klucz Groq). Domyslnie ustawienia **zostaja** - przydadza sie przy
-ponownej instalacji.
+Grid). Domyslnie ustawienia **zostaja** - przydadza sie przy ponownej
+instalacji. Klucz Groq z pliku `.env` lezy w folderze panelu i znika
+razem z nim.

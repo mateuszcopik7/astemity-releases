@@ -45,7 +45,9 @@ UninstallDisplayName={#MyName} {#MyVersion}
 Name: "pl"; MessagesFile: "compiler:Languages\Polish.isl"
 
 [Files]
-; Cala paczka panelu. .env (klucz Groq) nie jest w paczce i nie jest ruszany.
+; Cala paczka panelu. .env (klucz Groq) nie jest w paczce - przy
+; ponownej instalacji zostaje na miejscu, przy deinstalacji znika
+; razem z folderem panelu.
 Source: "{#Payload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Registry]
@@ -59,8 +61,8 @@ Root: HKCU; Subkey: "Software\Adobe\CSXS.12"; ValueType: string; ValueName: "Pla
 pl.FinishedLabel=Astemity jest zainstalowany.%n%nZamknij Premiere Pro calkowicie i odpal ponownie, potem: Okno > Rozszerzenia > Astemity.
 
 [Code]
-// Ustawienia uzytkownika: token do Groq w .env, zestawy efektow,
-// presety Grid. Leza poza folderem panelu, zeby przezyc aktualizacje.
+// Ustawienia uzytkownika: zestawy efektow i presety Grid.
+// Leza poza folderem panelu, zeby przezyc aktualizacje.
 function SettingsDir(): String;
 begin
   Result := ExpandConstant('{userappdata}') + '\pr-toolkit';
@@ -81,7 +83,7 @@ begin
     if DirExists(Dir) then
     begin
       if MsgBox('Usunac takze Twoje ustawienia Astemity?' + #13#10 + #13#10 +
-                'Zestawy efektow, presety Grid i klucz Groq z folderu:' + #13#10 +
+                'Zestawy efektow i presety Grid z folderu:' + #13#10 +
                 Dir + #13#10 + #13#10 +
                 'Nie = ustawienia zostaja na miejscu (zalecane, przydadza sie ' +
                 'przy ponownej instalacji).',
