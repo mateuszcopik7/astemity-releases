@@ -1,0 +1,126 @@
+# Buduje whisper-cli (whisper.cpp) do lokalnej transkrypcji w Napisach
+# i wrzuca go do wydania "whisper-<wersja>" w tym repo.
+#
+#   whisper-cli-macos           jeden plik: arm64 + x86_64, statyczny, Metal w srodku
+#   whisper-vulkan-win-x64.zip  Windows x64: Vulkan (NVIDIA, AMD, Intel) + warianty CPU
+#   whisper-bin-x64.zip         kopia oficjalnej paczki CPU z ggml-org (zapas)
+#
+# Wydanie oznaczone jako NIE najnowsze: updater panelu czyta
+# releases/latest i nie moze trafic na to wydanie.
+# Po buildzie sumy SHA-256 i rozmiary trzeba wpisac do js/whisper.js.
+# Uruchamiany recznie: Actions > Whisper > Run workflow.
+name: Whisper
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Wersja whisper.cpp (tag bez v), np. 1.9.5"
+        required: true
+        default: "1.9.5"
+      cpu_build:
+        description: "Tag oficjalnej paczki CPU ggml-org z tego samego commitu, np. b5454"
+        required: true
+        default: "b5454"
+
+permissions:
+  contents: write
+
+env:
+  VULKAN_VERSION: 1.4.313.2
+
+jobs:
+  mac:
+    runs-on: macos-14
+    steps:
+      - name: Zrodla whisper.cpp
+        run: git clone -q --depth 1 --branch "v${{ inputs.version }}" https://github.com/ggml-org/whisper.cpp src
+
+      - name: Build
+        run: |
+          cmake -S src -B build -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_NATIVE=OFF \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DWHISPER_BUILD_TESTS=OFF -DWHISPER_SDL2=OFF
+          cmake --build build -j 4 --config Release --target whisper-cli
+          cp build/bin/whisper-cli whisper-cli-macos
+          lipo whisper-cli-macos -verify_arch arm64 x86_64
+          # Tylko biblioteki systemowe - nic z build/ ani z Homebrew.
+          ! otool -L whisper-cli-macos | grep -E '@rpath|/opt/homebrew|/usr/local'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: whisper-cli-macos
+
+  win:
+    runs-on: windows-latest
+    steps:
+      - name: Vulkan SDK
+        shell: pwsh
+        run: |
+          curl.exe -sSL -o "$env:RUNNER_TEMP\vulkan.exe" "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          & "$env:RUNNER_TEMP\vulkan.exe" --accept-licenses --default-answer --confirm-command install
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_VERSION"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$env:VULKAN_VERSION\bin"
+
+      - name: Zrodla whisper.cpp
+        shell: bash
+        run: git clone -q --depth 1 --branch "v${{ inputs.version }}" https://github.com/ggml-org/whisper.cpp src
+
+      # GGML_BACKEND_DL: Vulkan i CPU jako osobne dll ladowane przy starcie.
+      # Bez sterownika Vulkan ggml-vulkan.dll sie nie zaladuje i zostaje CPU.
+      - name: Build
+        shell: bash
+        run: |
+          cmake -S src -B build -A x64 \
+            -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON \
+            -DWHISPER_SDL2=OFF -DWHISPER_BUILD_TESTS=OFF
+          cmake --build build --config Release -j 4
+
+      - name: Zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory pack | Out-Null
+          Copy-Item build\bin\Release\whisper-cli.exe pack\
+          Copy-Item build\bin\Release\*.dll pack\
+          if (-not (Test-Path pack\ggml-vulkan.dll)) { throw "brak ggml-vulkan.dll" }
+          Get-ChildItem pack | Format-Table Name, Length
+          Compress-Archive -Path pack\* -DestinationPath whisper-vulkan-win-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win
+          path: whisper-vulkan-win-x64.zip
+
+  release:
+    needs: [mac, win]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Paczka CPU z ggml-org
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ inputs.cpu_build }}" --repo ggml-org/whisper.cpp \
+            --pattern whisper-bin-x64.zip --dir out
+
+      - name: Wydanie whisper-${{ inputs.version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="whisper-${{ inputs.version }}"
+          cd out
+          sha256sum *
+          ls -l
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --latest=false \
+              --title "whisper.cpp ${{ inputs.version }} (lokalna transkrypcja)" \
+              --notes "Programy whisper-cli dla panelu Astemity. Pobiera je panel (Napisy > Lokalnie). whisper.cpp: MIT, https://github.com/ggml-org/whisper.cpp"
+          fi
+          gh release upload "$TAG" whisper-cli-macos whisper-vulkan-win-x64.zip whisper-bin-x64.zip \
+            --repo "$GITHUB_REPOSITORY" --clobber
